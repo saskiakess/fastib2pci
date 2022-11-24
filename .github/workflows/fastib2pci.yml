@@ -1,0 +1,121 @@
+name: fastib2pci
+on:
+  push:
+    branches:
+      - main
+jobs:
+  generic_pci:
+    runs-on: ubuntu-latest
+    steps:
+      - name: install nodejs
+        uses: actions/setup-node@v3
+        with:
+          node-version: '16.10.0'
+      - name: checkout ee
+        run: git clone https://github.com/DIPFtba/ee4pci.git ./ee
+      - name: checkout pages
+        uses: actions/checkout@v3
+        with: 
+            ref: 'gh-pages'
+            path: 'public'
+      - name: checkout items
+        uses: actions/checkout@v3
+        with: 
+            path: 'items'
+      - name: checkout pci (tao)
+        run: git clone https://github.com/DIPFtba/ibTaoPciRemote.git ./pci
+      - name: checkout pci (ims)
+        run: git clone -b ims https://github.com/DIPFtba/ibTaoPciRemote.git ./pci_ims	        
+      - name: setup & build ee
+        run: |
+           rm -r ./ee/ee/public/items/*
+           cp -a ./items/items/. ./ee/ee/public/items/
+           echo `ls ./ee/ee/public/items/` && echo `ls ./items/items/`
+           npm install --prefix ./ee/ee
+           export REPONAME="${GITHUB_REPOSITORY#*/}"
+           sed -i 's@/ee4pci/@/'"$REPONAME"'/@' ./ee/ee/package.json
+           cd ee/ee && npm run build
+      - name: copy build
+        run: rm -r ./public/* &&
+             cp -a ./ee/ee/build/. ./public/ &&
+             echo `ls ./ee/ee/build/items` && echo `ls ./public/items`
+      - name: build pci (tao)
+        run: |
+           export REPONAME="${GITHUB_REPOSITORY#*/}"
+           cd ./pci/scripts/packer
+           npm i           
+           echo "https://$GITHUB_REPOSITORY_OWNER.github.io/$REPONAME"
+           node ./index.js -u "https://$GITHUB_REPOSITORY_OWNER.github.io/$REPONAME" -i "$GITHUB_WORKSPACE/items/items" -o "$GITHUB_WORKSPACE"
+           cat ../../views/js/pciCreator/ibTaoConnector/confDefault.json
+      - name: build pci (ims)
+        run: |
+           export REPONAME="${GITHUB_REPOSITORY#*/}"
+           cd ./pci_ims/scripts/packer
+           npm i           
+           node ./index.js -u "https://$GITHUB_REPOSITORY_OWNER.github.io/$REPONAME" -i "$GITHUB_WORKSPACE/items/items" -o "$GITHUB_WORKSPACE"        
+      - name: Deploy EE to gh-pages
+        uses: s0/git-publish-subdir-action@develop
+        env:
+            REPO: self
+            BRANCH: gh-pages
+            FOLDER: public
+            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: take a screenshot
+        run: |
+          export REPONAME="${GITHUB_REPOSITORY#*/}"
+          npm install -D @playwright/test
+          npx playwright install --with-deps
+          npx playwright screenshot --wait-for-timeout 2000 --viewport-size 1024,768 "https://$GITHUB_REPOSITORY_OWNER.github.io/$REPONAME" screenshot.png
+      - name: release pci packages
+        uses: ncipollo/release-action@v1
+        with:
+          artifacts: ${{github.workspace}}/ibTaoGeneric.zip, ${{github.workspace}}/ibTaoGenericIMS.zip, ${{github.workspace}}/screenshot.png
+          replacesArtifacts: true
+          token: "${{ secrets.GITHUB_TOKEN }}"
+          tag: "latest"
+          allowUpdates: true          
+            
+  embedded_pci:
+    runs-on: ubuntu-latest   
+    steps:
+      - name: install nodejs
+        uses: actions/setup-node@v3
+        with:
+          node-version: '16.10.0'
+      - name: checkout ee
+        run: git clone https://github.com/DIPFtba/ee4pci.git ./ee
+      - name: checkout items
+        uses: actions/checkout@v3
+        with: 
+            path: 'items'
+      - name: checkout pci
+        run: git clone https://github.com/quark-s/oat-ibtaoembedded.git ./pci			
+      - name: setup & build ee
+        run: |
+           rm -r ./ee/ee/public/items/*
+           cp -a ./items/items/. ./ee/ee/public/items/
+           echo `ls ./ee/ee/public/items/` && echo `ls ./items/items/`
+           npm install --prefix ./ee/ee
+           export REPONAME="${GITHUB_REPOSITORY#*/}"
+           sed -i 's@/ee4pci/@./@' ./ee/ee/package.json
+           cd ee/ee && npm run build
+           find ./build/ -name *.map -exec rm {} \;
+      - name: copy ee build to pci assets
+        run: |
+            mkdir -p ./pci/views/js/pciCreator/ibTaoEmbedded/runtime/assets/ee
+            cp -a ./ee/ee/build/. ./pci/views/js/pciCreator/ibTaoEmbedded/runtime/assets/ee          
+      - name: build pci
+        run: |
+           export REPONAME="${GITHUB_REPOSITORY#*/}"
+           cd ./pci/scripts/packer
+           npm i           
+           echo "https://$GITHUB_REPOSITORY_OWNER.github.io/$REPONAME"
+           node ./index.js -i "$GITHUB_WORKSPACE/items/items" -o "$GITHUB_WORKSPACE"
+      - name: release pci package 2
+        uses: ncipollo/release-action@v1
+        with:
+          artifacts: ${{github.workspace}}/ibTaoSpecific.zip
+          replacesArtifacts: true
+          token: "${{ secrets.GITHUB_TOKEN }}"
+          tag: "latest"
+          allowUpdates: true
